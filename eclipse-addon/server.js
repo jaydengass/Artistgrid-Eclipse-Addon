@@ -438,7 +438,7 @@ app.get('/manifest.json', (req, res) => {
   res.json({
     id: 'cx.artistgrid.eclipse',
     name: 'ArtistGrid',
-    version: '1.1.2',
+    version: '1.1.3',
     description: 'Streams released and unreleased music from ArtistGrid trackers',
     icon: 'https://raw.githubusercontent.com/artistgrid/apps/main/src-tauri/icons/icon.png',
     resources: ['search', 'stream', 'catalog'],
@@ -453,13 +453,16 @@ app.get('/health', (req, res) => {
 
 app.get('/search', async (req, res) => {
   const query = (req.query.q || '').trim().toLowerCase();
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
   if (!query) {
     return res.json({ tracks: [], albums: [], artists: [], playlists: [] });
   }
 
   try {
     const artists = await fetchArtistsCsv();
-    let matches = artists.filter(a => a.name.toLowerCase().includes(query)).slice(0, 8);
+    let matches = artists.filter(a => a.name.toLowerCase().includes(query));
 
     let searchArtists = matches;
     if (searchArtists.length === 0) {
@@ -473,13 +476,13 @@ app.get('/search', async (req, res) => {
         '1OARID98xCqRaBr8gyQCvI3aD4jKQDGgtedyRaiP_pyo',
         '1tD3ytt5wPx4zfcefXi5ATeYhIiDaugWjMS46nZrP568',
       ]);
-      searchArtists = artists.filter(a => popularIds.has(a.trackerId)).slice(0, 5);
+      searchArtists = artists.filter(a => popularIds.has(a.trackerId));
       if (searchArtists.length === 0) {
-        searchArtists = artists.slice(0, 5);
+        searchArtists = artists;
       }
     }
 
-    const artistResults = matches.map(a => ({
+    const artistResults = matches.slice(offset, offset + limit).map(a => ({
       id: a.trackerId || a.url,
       name: a.name,
       artworkURL: `https://assets.artistgrid.cx/webp/${a.name.toLowerCase().replace(/[^a-z0-9]/g, '')}.webp`,
@@ -555,9 +558,12 @@ app.get('/search', async (req, res) => {
       allAlbums.push(...r.albums);
     }
 
+    const pagedTracks = allTracks.slice(offset, offset + limit);
+    const pagedAlbums = allAlbums.slice(offset, offset + limit);
+
     res.json({
-      tracks: allTracks.slice(0, 500),
-      albums: allAlbums.slice(0, 100),
+      tracks: pagedTracks,
+      albums: pagedAlbums,
       artists: artistResults,
       playlists: []
     });
@@ -599,6 +605,8 @@ app.get('/stream/:id', async (req, res) => {
 
 app.get('/artist/:id', async (req, res) => {
   const trackerId = req.params.id;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
   try {
     const data = await loadMergedTrackerData(trackerId);
     if (!data) {
@@ -628,7 +636,7 @@ app.get('/artist/:id', async (req, res) => {
             title: track.name || 'Unknown',
             artist: data.name || 'Unknown Artist',
             album: era.name,
-            duration: track.track_length ? parseInt(track.track_length) : undefined,
+            duration: parseDuration(track.track_length),
             artworkURL: track.image || era.image,
             isrc: undefined,
             format: source === 'youtube' ? undefined : 'mp3',
@@ -655,8 +663,8 @@ app.get('/artist/:id', async (req, res) => {
       artworkURL: Object.values(data.eras)[0]?.image || `https://assets.artistgrid.cx/webp/${(data.name || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '')}.webp`,
       bio: data.credits,
       genres: [],
-      topTracks: tracks,
-      albums
+      topTracks: tracks.slice(offset, offset + limit),
+      albums: albums.slice(offset, offset + limit)
     });
   } catch (error) {
     console.error('Artist detail error:', error);
@@ -676,6 +684,9 @@ app.get('/album/:id', async (req, res) => {
   if (!trackerId || !eraKey) {
     return res.status(400).json({ error: 'Invalid album ID' });
   }
+
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   try {
     const data = await loadMergedTrackerData(trackerId);
@@ -703,7 +714,7 @@ app.get('/album/:id', async (req, res) => {
             title: track.name || 'Unknown',
             artist: data.name || 'Unknown Artist',
             album: era.name,
-            duration: track.track_length ? parseInt(track.track_length) : undefined,
+            duration: parseDuration(track.track_length),
             artworkURL: track.image || era.image,
             isrc: undefined,
             format: source === 'youtube' ? undefined : 'mp3',
@@ -721,7 +732,7 @@ app.get('/album/:id', async (req, res) => {
       year: undefined,
       description: era.description,
       trackCount: tracks.length,
-      tracks
+      tracks: tracks.slice(offset, offset + limit)
     });
   } catch (error) {
     console.error('Album detail error:', error);
