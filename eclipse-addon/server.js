@@ -117,21 +117,33 @@ function decodeTrackId(encoded) {
   }
 }
 
-function parseDuration(value) {
-  if (typeof value === 'number') return value > 0 ? value : undefined;
-  if (!value) return undefined;
-  const str = String(value).trim();
-  if (/^\d+$/.test(str)) {
-    const num = parseInt(str, 10);
-    return num > 0 ? num : undefined;
+function parseDuration(value, fallback) {
+  if (typeof value === 'number') {
+    if (value > 0) return value;
+  } else if (!value) {
+    if (typeof fallback === 'number' && fallback > 0) return fallback;
+    return undefined;
+  } else {
+    const str = String(value).trim();
+    if (!str) {
+      if (typeof fallback === 'number' && fallback > 0) return fallback;
+      return undefined;
+    }
+    if (/^\d+$/.test(str)) {
+      const num = parseInt(str, 10);
+      if (num > 0) return num;
+    } else {
+      const match = str.match(/^(\d+):(\d{2})$/);
+      if (match) {
+        const seconds = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+        if (seconds > 0) return seconds;
+      }
+      const num = parseInt(str, 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
   }
-  const match = str.match(/^(\d+):(\d{2})$/);
-  if (match) {
-    const seconds = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
-    return seconds > 0 ? seconds : undefined;
-  }
-  const num = parseInt(str, 10);
-  return isNaN(num) || num <= 0 ? undefined : num;
+  if (typeof fallback === 'number' && fallback > 0) return fallback;
+  return undefined;
 }
 
 async function fetchArtistsCsv() {
@@ -438,7 +450,7 @@ app.get('/manifest.json', (req, res) => {
   res.json({
     id: 'cx.artistgrid.eclipse',
     name: 'ArtistGrid',
-    version: '1.1.3',
+    version: '1.1.4',
     description: 'Streams released and unreleased music from ArtistGrid trackers',
     icon: 'https://raw.githubusercontent.com/artistgrid/apps/main/src-tauri/icons/icon.png',
     resources: ['search', 'stream', 'catalog'],
@@ -526,7 +538,7 @@ app.get('/search', async (req, res) => {
               title: track.name || 'Unknown',
               artist: artist.name,
               album: era.name,
-              duration: parseDuration(track.track_length),
+              duration: parseDuration(track.track_length, track.available_length),
               artworkURL: track.image || era.image,
               isrc: undefined,
               format: source === 'youtube' ? undefined : 'mp3',
@@ -636,7 +648,7 @@ app.get('/artist/:id', async (req, res) => {
             title: track.name || 'Unknown',
             artist: data.name || 'Unknown Artist',
             album: era.name,
-            duration: parseDuration(track.track_length),
+              duration: parseDuration(track.track_length, track.available_length),
             artworkURL: track.image || era.image,
             isrc: undefined,
             format: source === 'youtube' ? undefined : 'mp3',
@@ -714,7 +726,7 @@ app.get('/album/:id', async (req, res) => {
             title: track.name || 'Unknown',
             artist: data.name || 'Unknown Artist',
             album: era.name,
-            duration: parseDuration(track.track_length),
+              duration: parseDuration(track.track_length, track.available_length),
             artworkURL: track.image || era.image,
             isrc: undefined,
             format: source === 'youtube' ? undefined : 'mp3',
