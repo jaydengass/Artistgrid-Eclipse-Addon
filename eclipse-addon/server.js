@@ -117,6 +117,23 @@ function decodeTrackId(encoded) {
   }
 }
 
+function parseDuration(value) {
+  if (typeof value === 'number') return value > 0 ? value : undefined;
+  if (!value) return undefined;
+  const str = String(value).trim();
+  if (/^\d+$/.test(str)) {
+    const num = parseInt(str, 10);
+    return num > 0 ? num : undefined;
+  }
+  const match = str.match(/^(\d+):(\d{2})$/);
+  if (match) {
+    const seconds = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+    return seconds > 0 ? seconds : undefined;
+  }
+  const num = parseInt(str, 10);
+  return isNaN(num) || num <= 0 ? undefined : num;
+}
+
 async function fetchArtistsCsv() {
   const now = Date.now();
   if (artistsCache.length > 0 && now - artistsCacheTime < ARTISTS_CACHE_TTL) {
@@ -421,7 +438,7 @@ app.get('/manifest.json', (req, res) => {
   res.json({
     id: 'cx.artistgrid.eclipse',
     name: 'ArtistGrid',
-    version: '1.1.1',
+    version: '1.1.2',
     description: 'Streams released and unreleased music from ArtistGrid trackers',
     icon: 'https://raw.githubusercontent.com/artistgrid/apps/main/src-tauri/icons/icon.png',
     resources: ['search', 'stream', 'catalog'],
@@ -498,14 +515,15 @@ app.get('/search', async (req, res) => {
             const trackTitle = (track.name || '').toLowerCase();
             const artistMatch = artist.name.toLowerCase().includes(queryLower);
             const trackMatch = trackTitle.includes(queryLower);
-            if (!artistMatch && !trackMatch) continue;
+            const albumMatch = (era.name || '').toLowerCase().includes(queryLower);
+            if (!artistMatch && !trackMatch && !albumMatch) continue;
 
             tracks.push({
               id: track.id || encodeTrackId(playableUrl),
               title: track.name || 'Unknown',
               artist: artist.name,
               album: era.name,
-              duration: track.track_length ? parseInt(track.track_length) : undefined,
+              duration: parseDuration(track.track_length),
               artworkURL: track.image || era.image,
               isrc: undefined,
               format: source === 'youtube' ? undefined : 'mp3',
@@ -538,8 +556,8 @@ app.get('/search', async (req, res) => {
     }
 
     res.json({
-      tracks: allTracks.slice(0, 200),
-      albums: allAlbums.slice(0, 30),
+      tracks: allTracks.slice(0, 500),
+      albums: allAlbums.slice(0, 100),
       artists: artistResults,
       playlists: []
     });
