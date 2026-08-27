@@ -421,7 +421,7 @@ app.get('/manifest.json', (req, res) => {
   res.json({
     id: 'cx.artistgrid.eclipse',
     name: 'ArtistGrid',
-    version: '0.1.2',
+    version: '1.1.1',
     description: 'Streams released and unreleased music from ArtistGrid trackers',
     icon: 'https://raw.githubusercontent.com/artistgrid/apps/main/src-tauri/icons/icon.png',
     resources: ['search', 'stream', 'catalog'],
@@ -479,44 +479,50 @@ app.get('/search', async (req, res) => {
       const albums = [];
       const queryLower = query.toLowerCase();
       for (const [eraKey, era] of Object.entries(data.eras)) {
-        if (era.data) {
-          for (const [cat, catTracks] of Object.entries(era.data)) {
-            if (!Array.isArray(catTracks)) continue;
-            for (const track of catTracks) {
-              const allUrls = track.urls || (track.url ? [track.url] : []);
-              const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
-              if (!playableUrl) continue;
-              const source = getTrackSource(playableUrl);
-              if (source === 'youtube' || source === 'unknown') continue;
+        if (!era.data) continue;
 
-              const trackTitle = (track.name || '').toLowerCase();
-              const artistMatch = artist.name.toLowerCase().includes(queryLower);
-              const trackMatch = trackTitle.includes(queryLower);
-              if (!artistMatch && !trackMatch) continue;
+        let eraTrackCount = 0;
+        for (const catTracks of Object.values(era.data)) {
+          if (Array.isArray(catTracks)) eraTrackCount += catTracks.length;
+        }
 
-              tracks.push({
-                id: track.id || encodeTrackId(playableUrl),
-                title: track.name || 'Unknown',
-                artist: artist.name,
-                album: era.name,
-                duration: track.track_length ? parseInt(track.track_length) : undefined,
-                artworkURL: track.image || era.image,
-                isrc: undefined,
-                format: source === 'youtube' ? undefined : 'mp3',
-                streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
-              });
-            }
-            if (catTracks.length > 0) {
-              albums.push({
-                id: `${trackerId}:${eraKey}`,
-                title: era.name,
-                artist: artist.name,
-                artworkURL: era.image,
-                trackCount: catTracks.length,
-                year: undefined
-              });
-            }
+        for (const [cat, catTracks] of Object.entries(era.data)) {
+          if (!Array.isArray(catTracks)) continue;
+          for (const track of catTracks) {
+            const allUrls = track.urls || (track.url ? [track.url] : []);
+            const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
+            if (!playableUrl) continue;
+            const source = getTrackSource(playableUrl);
+            if (source === 'youtube' || source === 'unknown') continue;
+
+            const trackTitle = (track.name || '').toLowerCase();
+            const artistMatch = artist.name.toLowerCase().includes(queryLower);
+            const trackMatch = trackTitle.includes(queryLower);
+            if (!artistMatch && !trackMatch) continue;
+
+            tracks.push({
+              id: track.id || encodeTrackId(playableUrl),
+              title: track.name || 'Unknown',
+              artist: artist.name,
+              album: era.name,
+              duration: track.track_length ? parseInt(track.track_length) : undefined,
+              artworkURL: track.image || era.image,
+              isrc: undefined,
+              format: source === 'youtube' ? undefined : 'mp3',
+              streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
+            });
           }
+        }
+
+        if (eraTrackCount > 0) {
+          albums.push({
+            id: `${trackerId}:${eraKey}`,
+            title: era.name,
+            artist: artist.name,
+            artworkURL: era.image,
+            trackCount: eraTrackCount,
+            year: undefined
+          });
         }
       }
       return { tracks, albums };
@@ -584,38 +590,44 @@ app.get('/artist/:id', async (req, res) => {
     const tracks = [];
     const albums = [];
     for (const [eraKey, era] of Object.entries(data.eras)) {
-      if (era.data) {
-        for (const [cat, catTracks] of Object.entries(era.data)) {
-          if (!Array.isArray(catTracks)) continue;
-          for (const track of catTracks) {
-            const allUrls = track.urls || (track.url ? [track.url] : []);
-            const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
-            if (!playableUrl) continue;
-            const source = getTrackSource(playableUrl);
-            if (source === 'youtube' || source === 'unknown') continue;
-            tracks.push({
-              id: track.id || encodeTrackId(playableUrl),
-              title: track.name || 'Unknown',
-              artist: data.name || 'Unknown Artist',
-              album: era.name,
-              duration: track.track_length ? parseInt(track.track_length) : undefined,
-              artworkURL: track.image || era.image,
-              isrc: undefined,
-              format: source === 'youtube' ? undefined : 'mp3',
-              streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
-            });
-          }
-          if (catTracks.length > 0) {
-            albums.push({
-              id: `${trackerId}:${eraKey}`,
-              title: era.name,
-              artist: data.name || 'Unknown Artist',
-              artworkURL: era.image,
-              trackCount: catTracks.length,
-              year: undefined
-            });
-          }
+      if (!era.data) continue;
+
+      let eraTrackCount = 0;
+      for (const catTracks of Object.values(era.data)) {
+        if (Array.isArray(catTracks)) eraTrackCount += catTracks.length;
+      }
+
+      for (const [cat, catTracks] of Object.entries(era.data)) {
+        if (!Array.isArray(catTracks)) continue;
+        for (const track of catTracks) {
+          const allUrls = track.urls || (track.url ? [track.url] : []);
+          const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
+          if (!playableUrl) continue;
+          const source = getTrackSource(playableUrl);
+          if (source === 'youtube' || source === 'unknown') continue;
+          tracks.push({
+            id: track.id || encodeTrackId(playableUrl),
+            title: track.name || 'Unknown',
+            artist: data.name || 'Unknown Artist',
+            album: era.name,
+            duration: track.track_length ? parseInt(track.track_length) : undefined,
+            artworkURL: track.image || era.image,
+            isrc: undefined,
+            format: source === 'youtube' ? undefined : 'mp3',
+            streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
+          });
         }
+      }
+
+      if (eraTrackCount > 0) {
+        albums.push({
+          id: `${trackerId}:${eraKey}`,
+          title: era.name,
+          artist: data.name || 'Unknown Artist',
+          artworkURL: era.image,
+          trackCount: eraTrackCount,
+          year: undefined
+        });
       }
     }
 
@@ -625,8 +637,8 @@ app.get('/artist/:id', async (req, res) => {
       artworkURL: Object.values(data.eras)[0]?.image || `https://assets.artistgrid.cx/webp/${(data.name || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '')}.webp`,
       bio: data.credits,
       genres: [],
-      topTracks: tracks.slice(0, 10),
-      albums: albums.slice(0, 10)
+      topTracks: tracks,
+      albums
     });
   } catch (error) {
     console.error('Artist detail error:', error);

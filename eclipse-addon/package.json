@@ -1,6 +1,6 @@
 {
   "name": "artistgrid-eclipse-addon",
-  "version": "0.1.2",
+  "version": "1.1.1",
   "description": "ArtistGrid addon for Eclipse Music",
   "main": "server.js",
   "scripts": {
