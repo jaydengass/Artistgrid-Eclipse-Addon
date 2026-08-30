@@ -1,23 +1,13 @@
-const express = require('express');
-const cors = require('cors');
-const app = express();
-
-app.use(cors());
-
-app.use((req, res, next) => {
-  console.log(`[REQUEST] ${req.method} ${req.path}`);
-  next();
-});
-
 const API_BASE = 'https://trackerapi.artistgrid.cx';
 const ARTISTS_CSV = 'https://artists.artistgrid.cx/artists.csv';
 
-let artistsCache = [];
-let artistsCacheTime = 0;
 const ARTISTS_CACHE_TTL = 1000 * 60 * 60;
-
-let trackerCache = new Map();
 const TRACKER_CACHE_TTL = 1000 * 60 * 5;
+
+const artistsCache = [];
+let artistsCacheTime = 0;
+
+const trackerCache = new Map();
 
 function normalizePillowsUrl(url) {
   return url.replace(/pillowcase\.su/g, 'pillows.su');
@@ -39,10 +29,10 @@ function getTrackSource(url) {
   const normalized = normalizePillowsUrl(url);
   if (/https?:\/\/pillows\.su\/f\//.test(normalized)) return 'pillows';
   if (/https?:\/\/(?:www\.|music\.)?youtube\.com\/|https?:\/\/youtu\.be\//.test(normalized)) return 'youtube';
-  if (/https?:\/\/pixeldrain.com\/[du]\//.test(normalized)) return 'pixeldrain';
+  if (/https?:\/\/pixeldrain\.com\/[du]\//.test(normalized)) return 'pixeldrain';
   if (/https?:\/\/juicewrldapi\.com\/juicewrld/.test(normalized)) return 'juicewrldapi';
-  if (/https?:\/\/.*imgur\.gg/.test(normalized)) return 'imgur';
-  if (/https?:\/\/(www\.)?soundcloud\.com\//.test(normalized)) return 'soundcloud';
+  if (/https?:\/\/imgur\.gg\//.test(normalized)) return 'imgur';
+  if (/https?:\/\/(?:www\.)?soundcloud\.com\//.test(normalized)) return 'soundcloud';
   if (/https?:\/\/drive\.google\.com\/file\/d\//.test(normalized)) return 'googledrive';
   return 'unknown';
 }
@@ -56,6 +46,64 @@ function isNetworkSource(source) {
 
 function needsResolution(source) {
   return RESOLVE_SOURCES.has(source);
+}
+
+function base64UrlEncode(str) {
+  const base64 = btoa(unescape(encodeURIComponent(str)));
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(encoded) {
+  const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = (4 - (base64.length % 4)) % 4;
+  const binary = atob(base64 + '='.repeat(padding));
+  return decodeURIComponent(escape(binary));
+}
+
+function encodeTrackId(url) {
+  return base64UrlEncode(url);
+}
+
+function decodeTrackId(encoded) {
+  try {
+    return base64UrlDecode(encoded);
+  } catch {
+    return null;
+  }
+}
+
+function isUrl(str) {
+  if (!str || typeof str !== 'string') return false;
+  return str.startsWith('http://') || str.startsWith('https://');
+}
+
+function parseDuration(value, fallback) {
+  if (typeof value === 'number') {
+    if (value > 0) return value;
+  } else if (!value) {
+    if (typeof fallback === 'number' && fallback > 0) return fallback;
+    return undefined;
+  } else {
+    const str = String(value).trim();
+    if (!str) {
+      if (typeof fallback === 'number' && fallback > 0) return fallback;
+      return undefined;
+    }
+    if (/^\d+$/.test(str)) {
+      const num = parseInt(str, 10);
+      if (num > 0) return num;
+    } else {
+      const match = str.match(/^(\d+):(\d{2})$/);
+      if (match) {
+        const seconds = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+        if (seconds > 0) return seconds;
+      }
+      const num = parseInt(str, 10);
+      if (!isNaN(num) && num > 0) return num;
+    }
+  }
+  if (typeof fallback === 'number' && fallback > 0) return fallback;
+  return undefined;
 }
 
 async function resolvePlayableUrl(url) {
@@ -103,47 +151,34 @@ async function resolvePlayableUrl(url) {
   }
 }
 
-function encodeTrackId(url) {
-  return Buffer.from(url).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function decodeTrackId(encoded) {
-  try {
-    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-    const padding = (4 - (base64.length % 4)) % 4;
-    return Buffer.from(base64 + '='.repeat(padding), 'base64').toString('utf-8');
-  } catch {
-    return null;
-  }
-}
-
-function parseDuration(value, fallback) {
-  if (typeof value === 'number') {
-    if (value > 0) return value;
-  } else if (!value) {
-    if (typeof fallback === 'number' && fallback > 0) return fallback;
-    return undefined;
-  } else {
-    const str = String(value).trim();
-    if (!str) {
-      if (typeof fallback === 'number' && fallback > 0) return fallback;
-      return undefined;
-    }
-    if (/^\d+$/.test(str)) {
-      const num = parseInt(str, 10);
-      if (num > 0) return num;
-    } else {
-      const match = str.match(/^(\d+):(\d{2})$/);
-      if (match) {
-        const seconds = parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
-        if (seconds > 0) return seconds;
-      }
-      const num = parseInt(str, 10);
-      if (!isNaN(num) && num > 0) return num;
+function getAllTrackUrls(track) {
+  const urls = [];
+  if (track.urls) {
+    for (const u of track.urls) {
+      if (isUrl(u)) urls.push(normalizePillowsUrl(u));
     }
   }
-  if (typeof fallback === 'number' && fallback > 0) return fallback;
-  return undefined;
+  if (urls.length === 0 && track.url && isUrl(track.url)) {
+    urls.push(normalizePillowsUrl(track.url));
+  }
+  if (urls.length === 0 && track.quality && isUrl(track.quality)) {
+    urls.push(normalizePillowsUrl(track.quality));
+  }
+  if (urls.length === 0 && track.available_length && isUrl(track.available_length)) {
+    urls.push(normalizePillowsUrl(track.available_length));
+  }
+  return urls;
+}
+
+function pickPlayableUrl(track) {
+  const allUrls = getAllTrackUrls(track);
+  for (const u of allUrls) {
+    const source = getTrackSource(u);
+    if (source !== 'youtube' && source !== 'unknown') {
+      return { url: u, source };
+    }
+  }
+  return null;
 }
 
 async function fetchArtistsCsv() {
@@ -159,7 +194,7 @@ async function fetchArtistsCsv() {
     const headers = rows[0].split(',');
     const nameIdx = headers.indexOf('name');
     const urlIdx = headers.indexOf('url');
-    
+
     const artists = [];
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i].trim();
@@ -170,9 +205,10 @@ async function fetchArtistsCsv() {
       if (!name || !url) continue;
       artists.push({ name, url, trackerId: extractTrackerId(url) });
     }
-    artistsCache = artists;
+    artistsCache.length = 0;
+    artistsCache.push(...artists);
     artistsCacheTime = now;
-    return artists;
+    return artistsCache;
   } catch (error) {
     console.error('Failed to fetch artists CSV:', error);
     return artistsCache;
@@ -438,38 +474,215 @@ async function loadMergedTrackerData(trackerId) {
     ...(released.era_dates || [])
   ];
 
-  return {
+  const merged = {
     ...base,
     eras: mergedEras,
     tabs: mergedTabs,
     era_dates: mergedEraDates
   };
+
+  trackerCache.set(`${trackerId}:${cacheKey}`, { data: merged, time: now });
+  return merged;
 }
 
-app.get('/manifest.json', (req, res) => {
-  res.json({
+async function cachedJsonResponse(request, data, status, maxAgeSeconds, ctx) {
+  let cachedResponse;
+  try {
+    cachedResponse = await caches.default.match(new Request(request.url, { method: 'GET' }));
+  } catch {
+    cachedResponse = null;
+  }
+
+  if (cachedResponse) {
+    return cachedResponse;
+  }
+
+  const body = JSON.stringify(data);
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Cache-Control': `public, max-age=${maxAgeSeconds}`
+  };
+
+  const response = new Response(body, {
+    status: status || 200,
+    headers
+  });
+
+  if (maxAgeSeconds > 0 && ctx) {
+    try {
+      ctx.waitUntil(caches.default.put(new Request(request.url, { method: 'GET' }), response.clone()));
+    } catch {
+      // cache write failed, serve response anyway
+    }
+  }
+
+  return response;
+}
+
+function buildTrackItem(track, era, artistName, trackerId, playableUrl, source) {
+  return {
+    id: encodeTrackId(playableUrl),
+    title: track.name || 'Unknown',
+    artist: artistName || 'Unknown Artist',
+    album: era.name,
+    duration: parseDuration(track.track_length, track.available_length),
+    artworkURL: track.image || era.image,
+    isrc: undefined,
+    format: source === 'youtube' ? undefined : 'mp3',
+    streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
+  };
+}
+
+function buildAlbumItem(trackerId, eraKey, era, artistName, eraTrackCount) {
+  return {
+    id: `${trackerId}:${eraKey}`,
+    title: era.name,
+    artist: artistName,
+    artworkURL: era.image,
+    trackCount: eraTrackCount,
+    year: undefined
+  };
+}
+
+async function handleUi(request) {
+  const url = new URL(request.url);
+  const addonUrl = `${url.protocol}//${url.host}/manifest.json`;
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ArtistGrid Eclipse Addon</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0f0f11;
+    color: #e6e6e6;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .card {
+    background: #161618;
+    border: 1px solid #2a2a2d;
+    border-radius: 12px;
+    padding: 20px;
+    width: 90%;
+    max-width: 520px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+  }
+  .title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: #ffffff;
+  }
+  .row {
+    display: flex;
+    gap: 10px;
+  }
+  .url {
+    flex: 1;
+    background: #0f0f11;
+    border: 1px solid #2a2a2d;
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: #e6e6e6;
+    font-size: 14px;
+    outline: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .copy {
+    background: #2a2a2d;
+    color: #ffffff;
+    border: 1px solid #3a3a3d;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .copy:hover { background: #353538; }
+  .hint {
+    margin-top: 12px;
+    font-size: 12px;
+    color: #8a8a8e;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="title">ArtistGrid Eclipse Addon</div>
+    <div class="row">
+      <input class="url" id="addonUrl" value="${addonUrl.replace(/"/g, '&quot;')}" readonly />
+      <button class="copy" id="copyBtn">Copy</button>
+    </div>
+    <div class="hint">Paste this URL into Eclipse to install the addon.</div>
+  </div>
+  <script>
+    const input = document.getElementById('addonUrl');
+    const btn = document.getElementById('copyBtn');
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(input.value);
+        btn.textContent = 'Copied';
+        setTimeout(() => btn.textContent = 'Copy', 1500);
+      } catch {
+        input.select();
+        document.execCommand('copy');
+        btn.textContent = 'Copied';
+        setTimeout(() => btn.textContent = 'Copy', 1500);
+      }
+    });
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html;charset=UTF-8' }
+  });
+}
+
+async function handleManifest(request) {
+  return new Response(JSON.stringify({
     id: 'cx.artistgrid.eclipse',
     name: 'ArtistGrid',
-    version: '1.1.4',
+    version: '1.0.0',
     description: 'Streams released and unreleased music from ArtistGrid trackers',
-    icon: 'https://raw.githubusercontent.com/artistgrid/apps/main/src-tauri/icons/icon.png',
+    icon: 'https://avatars.githubusercontent.com/u/221340129?s=200&v=4',
     resources: ['search', 'stream', 'catalog'],
     types: ['track', 'album', 'artist'],
     contentType: 'music'
+  }), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    }
   });
-});
+}
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
-});
+async function handleHealth(request, ctx) {
+  return cachedJsonResponse(request, { status: 'ok', timestamp: Date.now() }, 200, 60, ctx);
+}
 
-app.get('/search', async (req, res) => {
-  const query = (req.query.q || '').trim().toLowerCase();
-  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+async function handleSearch(request, ctx) {
+  const url = new URL(request.url);
+  const query = (url.searchParams.get('q') || '').trim().toLowerCase();
+  const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 50, 200);
+  const offset = Math.max(parseInt(url.searchParams.get('offset'), 10) || 0, 0);
 
   if (!query) {
-    return res.json({ tracks: [], albums: [], artists: [], playlists: [] });
+    return jsonResponse({ tracks: [], albums: [], artists: [], playlists: [] });
   }
 
   try {
@@ -494,13 +707,6 @@ app.get('/search', async (req, res) => {
       }
     }
 
-    const artistResults = matches.slice(offset, offset + limit).map(a => ({
-      id: a.trackerId || a.url,
-      name: a.name,
-      artworkURL: `https://assets.artistgrid.cx/webp/${a.name.toLowerCase().replace(/[^a-z0-9]/g, '')}.webp`,
-      type: 'artist'
-    }));
-
     const trackPromises = searchArtists.map(async (artist) => {
       const trackerId = artist.trackerId;
       if (!trackerId) return null;
@@ -518,44 +724,27 @@ app.get('/search', async (req, res) => {
           if (Array.isArray(catTracks)) eraTrackCount += catTracks.length;
         }
 
+        let albumMatch = (era.name || '').toLowerCase().includes(queryLower);
+        let matchedTracks = 0;
         for (const [cat, catTracks] of Object.entries(era.data)) {
           if (!Array.isArray(catTracks)) continue;
           for (const track of catTracks) {
-            const allUrls = track.urls || (track.url ? [track.url] : []);
-            const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
-            if (!playableUrl) continue;
-            const source = getTrackSource(playableUrl);
-            if (source === 'youtube' || source === 'unknown') continue;
+            const picked = pickPlayableUrl(track);
+            if (!picked) continue;
+            const { url: playableUrl, source } = picked;
 
             const trackTitle = (track.name || '').toLowerCase();
             const artistMatch = artist.name.toLowerCase().includes(queryLower);
             const trackMatch = trackTitle.includes(queryLower);
-            const albumMatch = (era.name || '').toLowerCase().includes(queryLower);
             if (!artistMatch && !trackMatch && !albumMatch) continue;
 
-            tracks.push({
-              id: track.id || encodeTrackId(playableUrl),
-              title: track.name || 'Unknown',
-              artist: artist.name,
-              album: era.name,
-              duration: parseDuration(track.track_length, track.available_length),
-              artworkURL: track.image || era.image,
-              isrc: undefined,
-              format: source === 'youtube' ? undefined : 'mp3',
-              streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
-            });
+            tracks.push(buildTrackItem(track, era, artist.name, trackerId, playableUrl, source));
+            matchedTracks++;
           }
         }
 
-        if (eraTrackCount > 0) {
-          albums.push({
-            id: `${trackerId}:${eraKey}`,
-            title: era.name,
-            artist: artist.name,
-            artworkURL: era.image,
-            trackCount: eraTrackCount,
-            year: undefined
-          });
+        if ((albumMatch || matchedTracks > 0) && eraTrackCount > 0) {
+          albums.push(buildAlbumItem(trackerId, eraKey, era, artist.name, eraTrackCount));
         }
       }
       return { tracks, albums };
@@ -564,65 +753,85 @@ app.get('/search', async (req, res) => {
     const results = await Promise.all(trackPromises);
     const allTracks = [];
     const allAlbums = [];
+    const matchedArtistIds = new Set();
     for (const r of results) {
       if (!r) continue;
       allTracks.push(...r.tracks);
       allAlbums.push(...r.albums);
+      for (const t of r.tracks) {
+        if (t.artist) matchedArtistIds.add(t.artist);
+      }
     }
 
     const pagedTracks = allTracks.slice(offset, offset + limit);
     const pagedAlbums = allAlbums.slice(offset, offset + limit);
 
-    res.json({
+    const matchedArtistNames = new Set(matches.map(a => a.name));
+    const artistResults = artists
+      .filter(a => matchedArtistNames.has(a.name) || matchedArtistIds.has(a.name))
+      .slice(offset, offset + limit)
+      .map(a => ({
+        id: a.trackerId || a.url,
+        name: a.name,
+        artworkURL: `https://assets.artistgrid.cx/webp/${a.name.toLowerCase().replace(/[^a-z0-9]/g, '')}.webp`,
+        type: 'artist'
+      }));
+
+    const payload = {
       tracks: pagedTracks,
       albums: pagedAlbums,
       artists: artistResults,
       playlists: []
-    });
+    };
+
+    return cachedJsonResponse(request, payload, 200, 120, ctx);
   } catch (error) {
     console.error('Search error:', error);
-    res.json({ tracks: [], albums: [], artists: [], playlists: [] });
+    return jsonResponse({ tracks: [], albums: [], artists: [], playlists: [] });
   }
-});
+}
 
-app.get('/stream/:id', async (req, res) => {
-  const encodedId = req.params.id;
-  const url = decodeTrackId(encodedId);
-  if (!url) {
-    return res.status(400).json({ error: 'Invalid track ID' });
+async function handleStream(request) {
+  const url = new URL(request.url);
+  const encodedId = url.pathname.split('/').pop();
+  const decodedUrl = decodeTrackId(encodedId);
+  if (!decodedUrl) {
+    return jsonResponse({ error: 'Invalid track ID' }, 400);
   }
 
   try {
-    const playableUrl = await resolvePlayableUrl(url);
+    const playableUrl = await resolvePlayableUrl(decodedUrl);
     if (!playableUrl) {
-      return res.status(404).json({ error: 'Could not resolve playable URL' });
+      return jsonResponse({ error: 'Could not resolve playable URL' }, 404);
     }
 
-    const source = getTrackSource(url);
+    const source = getTrackSource(decodedUrl);
     let format = 'mp3';
     if (source === 'youtube') format = 'mp3';
     else if (source === 'soundcloud') format = 'mp3';
     else if (source === 'pixeldrain') format = 'mp3';
 
-    res.json({
+    return jsonResponse({
       url: playableUrl,
       format,
       quality: '320kbps'
     });
   } catch (error) {
     console.error('Stream resolution error:', error);
-    res.status(500).json({ error: 'Stream resolution failed' });
+    return jsonResponse({ error: 'Stream resolution failed' }, 500);
   }
-});
+}
 
-app.get('/artist/:id', async (req, res) => {
-  const trackerId = req.params.id;
-  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+async function handleArtist(request, ctx) {
+  const url = new URL(request.url);
+  const trackerId = url.pathname.split('/').pop();
+  const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 50, 200);
+  const offset = Math.max(parseInt(url.searchParams.get('offset'), 10) || 0, 0);
+
   try {
     const data = await loadMergedTrackerData(trackerId);
     if (!data) {
-      return res.status(404).json({ error: 'Artist not found' });
+      return jsonResponse({ error: 'Artist not found' }, 404);
     }
 
     const tracks = [];
@@ -638,38 +847,19 @@ app.get('/artist/:id', async (req, res) => {
       for (const [cat, catTracks] of Object.entries(era.data)) {
         if (!Array.isArray(catTracks)) continue;
         for (const track of catTracks) {
-          const allUrls = track.urls || (track.url ? [track.url] : []);
-          const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
-          if (!playableUrl) continue;
-          const source = getTrackSource(playableUrl);
-          if (source === 'youtube' || source === 'unknown') continue;
-          tracks.push({
-            id: track.id || encodeTrackId(playableUrl),
-            title: track.name || 'Unknown',
-            artist: data.name || 'Unknown Artist',
-            album: era.name,
-              duration: parseDuration(track.track_length, track.available_length),
-            artworkURL: track.image || era.image,
-            isrc: undefined,
-            format: source === 'youtube' ? undefined : 'mp3',
-            streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
-          });
+          const picked = pickPlayableUrl(track);
+          if (!picked) continue;
+          const { url: playableUrl, source } = picked;
+          tracks.push(buildTrackItem(track, era, data.name || 'Unknown Artist', trackerId, playableUrl, source));
         }
       }
 
       if (eraTrackCount > 0) {
-        albums.push({
-          id: `${trackerId}:${eraKey}`,
-          title: era.name,
-          artist: data.name || 'Unknown Artist',
-          artworkURL: era.image,
-          trackCount: eraTrackCount,
-          year: undefined
-        });
+        albums.push(buildAlbumItem(trackerId, eraKey, era, data.name || 'Unknown Artist', eraTrackCount));
       }
     }
 
-    res.json({
+    const payload = {
       id: trackerId,
       name: data.name || 'Unknown Artist',
       artworkURL: Object.values(data.eras)[0]?.image || `https://assets.artistgrid.cx/webp/${(data.name || 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '')}.webp`,
@@ -677,38 +867,41 @@ app.get('/artist/:id', async (req, res) => {
       genres: [],
       topTracks: tracks.slice(offset, offset + limit),
       albums: albums.slice(offset, offset + limit)
-    });
+    };
+
+    return cachedJsonResponse(request, payload, 200, 300, ctx);
   } catch (error) {
     console.error('Artist detail error:', error);
-    res.status(500).json({ error: 'Failed to load artist' });
+    return jsonResponse({ error: 'Failed to load artist' }, 500);
   }
-});
+}
 
-app.get('/album/:id', async (req, res) => {
-  const albumId = req.params.id;
+async function handleAlbum(request, ctx) {
+  const url = new URL(request.url);
+  const albumId = url.pathname.split('/').pop();
   const firstColon = albumId.indexOf(':');
   if (firstColon === -1) {
-    return res.status(400).json({ error: 'Invalid album ID' });
+    return jsonResponse({ error: 'Invalid album ID' }, 400);
   }
   const trackerId = albumId.substring(0, firstColon);
   const eraKey = albumId.substring(firstColon + 1);
 
   if (!trackerId || !eraKey) {
-    return res.status(400).json({ error: 'Invalid album ID' });
+    return jsonResponse({ error: 'Invalid album ID' }, 400);
   }
 
-  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
-  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 50, 200);
+  const offset = Math.max(parseInt(url.searchParams.get('offset'), 10) || 0, 0);
 
   try {
     const data = await loadMergedTrackerData(trackerId);
     if (!data) {
-      return res.status(404).json({ error: 'Album not found' });
+      return jsonResponse({ error: 'Album not found' }, 404);
     }
 
     const era = data.eras[eraKey];
     if (!era) {
-      return res.status(404).json({ error: 'Era not found' });
+      return jsonResponse({ error: 'Era not found' }, 404);
     }
 
     const tracks = [];
@@ -716,27 +909,15 @@ app.get('/album/:id', async (req, res) => {
       for (const [cat, catTracks] of Object.entries(era.data)) {
         if (!Array.isArray(catTracks)) continue;
         for (const track of catTracks) {
-          const allUrls = track.urls || (track.url ? [track.url] : []);
-          const playableUrl = allUrls.length > 0 ? allUrls[0] : null;
-          if (!playableUrl) continue;
-          const source = getTrackSource(playableUrl);
-          if (source === 'youtube' || source === 'unknown') continue;
-          tracks.push({
-            id: track.id || encodeTrackId(playableUrl),
-            title: track.name || 'Unknown',
-            artist: data.name || 'Unknown Artist',
-            album: era.name,
-              duration: parseDuration(track.track_length, track.available_length),
-            artworkURL: track.image || era.image,
-            isrc: undefined,
-            format: source === 'youtube' ? undefined : 'mp3',
-            streamURL: (isNetworkSource(source) || needsResolution(source)) ? undefined : playableUrl
-          });
+          const picked = pickPlayableUrl(track);
+          if (!picked) continue;
+          const { url: playableUrl, source } = picked;
+          tracks.push(buildTrackItem(track, era, data.name || 'Unknown Artist', trackerId, playableUrl, source));
         }
       }
     }
 
-    res.json({
+    const payload = {
       id: albumId,
       title: era.name,
       artist: data.name || 'Unknown Artist',
@@ -745,36 +926,90 @@ app.get('/album/:id', async (req, res) => {
       description: era.description,
       trackCount: tracks.length,
       tracks: tracks.slice(offset, offset + limit)
-    });
+    };
+
+    return cachedJsonResponse(request, payload, 200, 300, ctx);
   } catch (error) {
     console.error('Album detail error:', error);
-    res.status(500).json({ error: 'Failed to load album' });
+    return jsonResponse({ error: 'Failed to load album' }, 500);
   }
-});
+}
 
-app.get('/playlist/:id', (req, res) => {
-  res.status(501).json({ error: 'Playlists are not supported by ArtistGrid' });
-});
+async function handlePlaylist() {
+  return jsonResponse({ error: 'Playlists are not supported by ArtistGrid' }, 501);
+}
 
-const PORT = process.env.PORT || 3000;
-const HOST = '0.0.0.0';
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    }
+  });
+}
 
-console.log('Environment PORT:', process.env.PORT);
-console.log('Resolved PORT:', PORT);
+export default {
+  async fetch(request, env, ctx) {
+    try {
+      const url = new URL(request.url);
+      const pathname = url.pathname;
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
-});
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type'
+          }
+        });
+      }
 
-process.on('unhandledRejection', (err) => {
-  console.error('Unhandled rejection:', err);
-});
+      if (pathname === '/' || pathname === '') {
+        return handleUi(request);
+      }
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`ArtistGrid Eclipse addon listening on http://${HOST}:${PORT}`);
-});
+      if (pathname === '/manifest.json' || pathname.endsWith('/manifest.json')) {
+        return handleManifest(request);
+      }
 
-server.on('error', (err) => {
-  console.error('Server error:', err);
-  process.exit(1);
-});
+      if (pathname === '/health' || pathname.endsWith('/health')) {
+        return handleHealth(request, ctx);
+      }
+
+      if (pathname === '/search' || pathname.endsWith('/search')) {
+        return handleSearch(request, ctx);
+      }
+
+      if (pathname.startsWith('/stream/')) {
+        return handleStream(request);
+      }
+
+      if (pathname.startsWith('/artist/')) {
+        return handleArtist(request, ctx);
+      }
+
+      if (pathname.startsWith('/album/')) {
+        return handleAlbum(request, ctx);
+      }
+
+      if (pathname.startsWith('/playlist/')) {
+        return handlePlaylist();
+      }
+
+      return jsonResponse({ error: 'Not found' }, 404);
+    } catch (error) {
+      console.error('Worker top-level error:', error);
+      return new Response(JSON.stringify({ error: 'Internal worker error' }), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+  }
+};

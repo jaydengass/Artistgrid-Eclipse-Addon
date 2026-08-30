@@ -1,35 +1,35 @@
 # ArtistGrid Eclipse Addon
 
-Eclipse Music addon that surfaces unreleased music from ArtistGrid trackers.
+Eclipse Music addon that surfaces released and unreleased music from ArtistGrid trackers.
 
-## Deploy to Railway
+## Cloudflare Worker
 
-1. Push this folder to GitHub
-2. In Railway, create a new project → **Deploy from GitHub**
-3. Select this repo
-4. Railway auto-detects Node.js and runs `npm start`
-5. After deploy, Railway gives you a public URL like `https://your-app.up.railway.app`
-6. Use that URL in Eclipse: **Settings → Connections → Add Connection → Addon**
+The main addon implementation is `worker.js`. Deploy it to Cloudflare Workers.
 
-## Local Dev
+### Local Dev
 
 ```bash
 cd eclipse-addon
-npm install
-npm start
+npx wrangler dev
 ```
 
-Server runs on `http://localhost:3000` by default.
+### Deploy
+
+```bash
+cd eclipse-addon
+npx wrangler deploy
+```
 
 ## Endpoints
 
 - `GET /manifest.json`
-- `GET /search?q={query}`
+- `GET /search?q={query}&offset=0&limit=50`
 - `GET /stream/{id}`
-- `GET /artist/{id}`
-- `GET /album/{id}`
+- `GET /artist/{id}?offset=0&limit=50`
+- `GET /album/{id}?offset=0&limit=50`
 - `GET /playlist/{id}` — not supported
 
-## Note
+## Install in Eclipse
 
-If you fork/clone this repo, make sure the `eclipse-addon` folder is the deploy root in Railway, or move `package.json`, `server.js`, and `railway.toml` to the repo root.
+Use your Worker URL (e.g. `https://artistgrid.artistgrid.cx`) in Eclipse:
+**Settings → Connections → Add Connection → Addon**
